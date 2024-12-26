@@ -1,0 +1,358 @@
+---
+---
+<div id="garden-container" class="garden-scene"></div>
+
+<style>
+  .garden-scene {
+    width: 100%;
+    height: 100vh;
+    margin: 0;
+    padding: 0;
+  }
+</style>
+
+<script>
+  //import * as THREE from 'three';
+  //import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+  import * as THREE from '../../gfusion/three.module.js';
+  
+  //const container = document.getElementById('garden-container');
+  //renderer.setSize(window.innerWidth, window.innerHeight);
+  //container?.appendChild(renderer.domElement);
+
+  const pcam = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 10000 );
+
+//设置全局变量.
+var container, renderer, camera, scene;
+var characterSize = 1;
+
+// Track all objects and collisions.
+var objects = [];
+
+// Set mouse and raycaster.
+var raycaster = new THREE.Raycaster();
+var mouse = new THREE.Vector2();
+
+// Store movements.
+var movements = [];
+var playerSpeed = 0.02;
+
+init();
+function init() {
+
+  container = document.getElementById('garden-container');
+  document.body.appendChild(container);
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xccddff);
+  scene.fog = new THREE.Fog(0xccddff, 5, 100);
+
+  var ambient = new THREE.AmbientLight(0xffffff);
+  scene.add(ambient);
+
+  var hemisphereLight = new THREE.HemisphereLight(0xdddddd, 0x000000, 0.5);
+  scene.add(hemisphereLight);
+
+  createFloor();
+  createTree(3, 3);
+  createTree(8, -3);
+  createTree(-3, 8);
+  createTree(-8, -8);
+
+  // Create the camera.
+  camera = new THREE.PerspectiveCamera(
+    60, // Angle
+    window.innerWidth / window.innerHeight, // Aspect Ratio.
+    0.01, // Near view.
+    200 // Far view.
+  );
+  camera.position.z = 10;
+  camera.position.y = 2;
+  scene.add(camera);
+
+  // Build the renderer
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+
+  var element = renderer.domElement;
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  container.appendChild(element);
+
+  document.addEventListener('mousedown', onDocumentMouseDown);
+  document.addEventListener('mouseup', onDocumentMouseUp);
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('touchstart', onDocumentTouchDown);
+  // document.addEventListener('touchend', onDocumentTouchUp);
+  document.addEventListener('touchmove', onDocumentTouchMove);
+}
+
+window.onresize = function () {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+};
+
+function onDocumentTouchDown(event) {
+  event.preventDefault();
+  toucheMovementX = event.touches[0].clientX;
+  toucheMovementY = event.touches[0].clientY;
+}
+
+var toucheMovementX, toucheMovementY;
+function onDocumentTouchMove(event) {
+  event.preventDefault();
+
+  //0.5为移动端旋转角度的速度
+  event.movementX = 0.5 * (event.touches[0].clientX - toucheMovementX);
+  event.movementY = 0.5 * (event.touches[0].clientY - toucheMovementY);
+  toucheMovementX = event.touches[0].clientX;
+  toucheMovementY = event.touches[0].clientY;
+  onMouseMove(event, true);
+}
+
+//#region 相机旋转
+var minPolarAngle = 0; // radians
+var maxPolarAngle = Math.PI; // radians
+var pointerSpeed = 1.0;
+const _PI_2 = Math.PI / 2;
+const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
+
+//相机旋转
+function onMouseMove(event, ismobile = false) {
+  event.preventDefault();
+  if (!isClicked && !ismobile)
+    return;
+
+  const movementX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
+  const movementY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
+
+  _euler.setFromQuaternion(camera.quaternion);
+
+  _euler.y += movementX * 0.002 * pointerSpeed;
+  _euler.x += movementY * 0.002 * pointerSpeed;
+
+  _euler.x = Math.max(_PI_2 - maxPolarAngle, Math.min(_PI_2 - minPolarAngle, _euler.x));
+
+  camera.quaternion.setFromEuler(_euler);
+}
+//#endregion
+
+//#region 相机移动
+var clickPointX, clickPointY;
+var isClicked = false;
+function onDocumentMouseDown(event, ismobile = false) {
+  event.preventDefault();
+  //鼠标按下时，记录点击位置
+  if (event.which == 1 || ismobile) {
+    clickPointX = event.clientX;
+    clickPointY = event.clientY;
+    isClicked = true;
+  }
+}
+
+//相机移动
+function onDocumentMouseUp(event, ismobile = false) {
+  event.preventDefault();
+  if (event.which == 1 || ismobile)
+    isClicked = false;
+  // 鼠标抬起时对比点击位置，如果移动了，则执行旋转视角，如果点击点未移动则执行相机移动
+  if (((event.which == 1 || ismobile) && clickPointX == event.clientX && clickPointY == event.clientY)) {
+    stopMovement();
+
+    // Grab the coordinates.
+    mouse.x = (event.clientX / renderer.domElement.clientWidth) * 2 - 1;
+    mouse.y = - (event.clientY / renderer.domElement.clientHeight) * 2 + 1;
+
+    // Use the raycaster to detect intersections.
+    raycaster.setFromCamera(mouse, camera);
+
+    // Grab all objects that can be intersected.
+    var intersects = raycaster.intersectObjects(objects);
+    if (intersects.length > 0) {
+      movements.push(intersects[0].point);
+    }
+  }
+}
+
+
+//movements:目标点的位置，movements.push(intersects[0].point);
+//move(camera, movements[0]);
+//destination目的地
+function move(location, destination, speed = playerSpeed) {
+destination.y=location.position.y;
+  var moveDistance = speed;
+
+  // Translate over to the position.
+  var posX = location.position.x;
+  var posZ = location.position.z;
+  var newPosX = destination.x;
+  var newPosZ = destination.z;
+
+  // 设置一个乘数，以防我们需要负值。
+  var multiplierX = 1;
+  var multiplierZ = 1;
+
+  // 检测当前位置和目标之间的距离。
+  var diffX = Math.abs(posX - newPosX);
+  var diffZ = Math.abs(posZ - newPosZ);
+  var distance = Math.sqrt(diffX * diffX + diffZ * diffZ);
+//const distance = group.position.distanceTo(targetPositon) // 距离 
+//const distance = location.position.distanceTo(destination) // 距离 
+  // 如有必要，使用负乘数。
+  if (posX > newPosX) {
+    multiplierX = -1;
+  }
+
+  if (posZ > newPosZ) {
+    multiplierZ = -1;
+  }
+
+  // Update the main position.
+  location.position.x = location.position.x + (moveDistance * (diffX / distance)) * multiplierX;
+  location.position.z = location.position.z + (moveDistance * (diffZ / distance)) * multiplierZ;
+
+///////////////////////////////////	  
+//console.log('distance',distance);	
+
+if (distance>1){
+pcam.position.copy(location.position);
+pcam.lookAt(destination);
+const targetQuaternion=pcam.quaternion;  
+location.quaternion.slerp(targetQuaternion,0.02); //t = normalized value 0 to 1	
+}
+
+//camera.quaternion.slerp(targetQuaternion,0.1); //t = normalized value 0 to 1
+//let interpolation = new THREE.Quaternion().slerp(endQuat, startQuat, t);
+//camera.quaternion.copy(interpolation); // 应用插值后的旋转到相机	
+
+//const vector = camera.position.clone().sub(group.position) // camera 和 group 差向量
+//const vector = camera.position.clone().sub(location.position) // camera 和 group 差向量
+//location.lookAt(destination) // 模型朝向
+
+//location.rotation.y += Math.PI  // 朝向纠正  
+
+//const rotCam = camera.rotation.y-location.rotation.y // camera 和 group 角度
+
+////////////////////////////////
+
+
+  // If the position is close we can call the movement complete.
+  if ((location.position.x <= newPosX + moveDistance &&
+    location.position.x >= newPosX - moveDistance) &&
+    (location.position.z <= newPosZ + moveDistance &&
+      location.position.z >= newPosZ - moveDistance)) {
+    location.position.x = (location.position.x);
+    location.position.z = (location.position.z);
+
+    // Reset any movements.
+    stopMovement();
+
+    // Maybe move should return a boolean. True if completed, false if not. 
+  }
+
+}
+
+/**
+ * Stop character movement.
+ */
+function stopMovement() {
+  movements = [];
+  scene.remove(indicatorTop);
+  scene.remove(indicatorBottom);
+}
+//#endregion
+
+function render() {
+  renderer.render(scene, camera);
+
+  // If any movement was added, run it!
+  if (movements.length > 0) {
+    // Set an indicator point to destination.
+    if (scene.getObjectByName('indicator_top') === undefined) {
+      drawIndicator();
+    } else {
+      if (indicatorTop.position.y > 0.1) {
+        indicatorTop.position.y -= 0.01;
+      } else {
+        indicatorTop.position.y = 0.5;
+      }
+    }
+
+    move(camera, movements[0]);
+  }
+
+}
+
+animate();
+function animate() {
+  requestAnimationFrame(animate);
+  render();
+}
+
+//#region 创建参照物
+// 创建地面.
+function createFloor() {
+  var geometry = new THREE.PlaneGeometry(100, 100);
+  var material = new THREE.MeshToonMaterial({ color: 0x6e6e6e });
+  var plane = new THREE.Mesh(geometry, material);
+  plane.rotation.x = -1 * Math.PI / 2;
+  plane.position.y = 0;
+  scene.add(plane);
+  objects.push(plane);
+}
+
+// 创建树.
+function createTree(posX, posZ) {
+  // Set some random values so our trees look different.
+  var randomScale = (Math.random() * 3) + 0.8;
+  var randomRotateY = Math.PI / (Math.floor((Math.random() * 32) + 1));
+
+  // Create the trunk.
+  var geometry = new THREE.CylinderGeometry(characterSize / 3.5, characterSize / 2.5, characterSize * 1.3, 8);
+  var material = new THREE.MeshToonMaterial({ color: 0x664422 });
+  var trunk = new THREE.Mesh(geometry, material);
+  trunk.position.set(posX, ((characterSize * 1.3 * randomScale) / 2), posZ);
+  trunk.scale.x = trunk.scale.y = trunk.scale.z = randomScale;
+  scene.add(trunk);
+
+  var geometry = new THREE.DodecahedronGeometry(characterSize);
+  var material = new THREE.MeshToonMaterial({ color: 0x44aa44 });
+  var treeTop = new THREE.Mesh(geometry, material);
+  treeTop.position.set(posX, ((characterSize * 1.3 * randomScale) / 2) + characterSize * randomScale, posZ);
+  treeTop.scale.x = treeTop.scale.y = treeTop.scale.z = randomScale;
+  treeTop.rotation.y = randomRotateY;
+  scene.add(treeTop);
+}
+
+// 移动目的地指示器。
+var indicatorTop;
+var indicatorBottom;
+// 绘制3d目标点.
+function drawIndicator() {
+  // Store variables.
+  var topSize = characterSize / 8;
+  var bottomRadius = characterSize / 4;
+
+  // Create the top indicator.
+  var geometry = new THREE.TetrahedronGeometry(topSize, 0);
+  var material = new THREE.MeshToonMaterial({ color: 0x00ccff, emissive: 0x00ccff });
+  indicatorTop = new THREE.Mesh(geometry, material);
+  indicatorTop.position.y = 0.05; // Flat surface so hardcode Y position for now.
+  indicatorTop.position.x = movements[0].x; // Get the X destination.
+  indicatorTop.position.z = movements[0].z; // Get the Z destination.
+  indicatorTop.rotation.x = -0.97;
+  indicatorTop.rotation.y = Math.PI / 4;
+  indicatorTop.name = 'indicator_top'
+  scene.add(indicatorTop);
+
+  // Create the bottom indicator.
+  var geometry = new THREE.TorusGeometry(bottomRadius, (bottomRadius * 0.25), 2, 12);
+  geometry.dynamic = true;
+  var material = new THREE.MeshToonMaterial({ color: 0x00ccff, emissive: 0x00ccff });
+  indicatorBottom = new THREE.Mesh(geometry, material);
+  indicatorBottom.position.y = 0.025;
+  indicatorBottom.position.x = movements[0].x;
+  indicatorBottom.position.z = movements[0].z;
+  indicatorBottom.rotation.x = -Math.PI / 2;
+  scene.add(indicatorBottom);
+}
+</script>
